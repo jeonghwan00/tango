@@ -202,3 +202,8 @@ rt { font-size: .5em; color: var(--muted); font-family: "Hiragino Sans", sans-se
 .pending .sent { margin-top: 2px; }
 .pend-acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px; }
 .pend-acts button { padding: 10px 4px; font-size: 14px; }
+
+.words .group { font-size: 13px; font-weight: 700; color: var(--accent); padding: 10px 4px 0; }
+.lib { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.lib p { margin: 2px 0 0; }
+.lib button { flex: none; }

@@ -75,7 +75,7 @@ function ensureDay() {
 function hist() { const k = dayKey(); return (S.history[k] ||= { reviews: 0, newWords: 0 }); }
 
 // ---------- 덱 / 노트 ----------
-const NOTE_FIELDS = ['word', 'reading', 'pron', 'meaning', 'pos', 'sentence', 'sentence_ko', 'time'];
+const NOTE_FIELDS = ['word', 'reading', 'pron', 'meaning', 'pos', 'sentence', 'sentence_ko', 'time', 'group'];
 
 function findDeckByName(name) { return Object.values(S.decks).find((d) => d.name === name); }
 function ensureDeck(name) {
@@ -116,6 +116,7 @@ function notesOf(deckId) { return Object.values(S.notes).filter((n) => n.deckIds
 function mergeInto(n, deckId, raw) {
   const c = cleanNote(raw);
   if (!n.deckIds.includes(deckId)) n.deckIds.push(deckId);
+  if (!n.group && c.group) n.group = c.group;
   const known = [n.sentence, ...n.more.map((m) => m.sentence)].map(plainOf);
   if (c.sentence && !known.includes(plainOf(c.sentence))) {
     if (!n.sentence) Object.assign(n, { sentence: c.sentence, sentence_ko: c.sentence_ko, time: c.time });
@@ -449,8 +450,10 @@ function renderHome() {
   if (!Object.keys(S.notes).length) {
     $('#app').innerHTML = `<header class="top"><h1>単語</h1></header>
       <section class="empty"><p>아직 단어가 없어요.</p>
-      <button class="primary" data-act="go" data-view="import">단어 가져오기</button>
+      ${(LIB || []).map((d) => `<button class="primary" data-act="get-lib" data-file="${esc(d.file)}">${esc(d.name)} 받기</button>`).join('')}
+      <button class="${LIB && LIB.length ? '' : 'primary'}" data-act="go" data-view="import">다른 단어 가져오기</button>
       <button data-act="add-word">하나씩 추가</button></section>${installHint()}`;
+    if (!LIB) loadLibrary().then(() => { if (view === 'home' && !Object.keys(S.notes).length) renderHome(); });
     return;
   }
   const c = counts('flip'), t = counts('type');
@@ -589,7 +592,12 @@ function renderWords() {
 function wordsListHTML() {
   const q = wordsQuery.trim().toLowerCase();
   const ns = notesOf(wordsDeck).filter((n) => !q || [n.word, n.reading, n.meaning, pronOf(n)].some((x) => String(x).toLowerCase().includes(q)));
-  return `<ul class="words">${ns.map((n) => `<li><button data-act="edit-word" data-id="${n.id}"><span class="w" lang="ja">${esc(plainOf(n.word))}</span><span class="r" lang="ja">${esc(n.reading !== n.word ? n.reading : '')}</span><span class="m">${esc(n.meaning)}</span>${statusLabel(n)}</button></li>`).join('')}</ul>
+  let last = null;
+  return `<ul class="words">${ns.map((n) => {
+    const head = !q && n.group && n.group !== last ? `<li class="group">${esc(n.group)}</li>` : '';
+    last = n.group || last;
+    return head + `<li><button data-act="edit-word" data-id="${n.id}"><span class="w" lang="ja">${esc(plainOf(n.word))}</span><span class="r" lang="ja">${esc(n.reading !== n.word ? n.reading : '')}</span><span class="m">${esc(n.meaning)}</span>${statusLabel(n)}</button></li>`;
+  }).join('')}</ul>
     <p class="muted center">${ns.length}단어</p>`;
 }
 
@@ -642,9 +650,32 @@ const GPT_PROMPT = `아래는 일본어 유튜브 영상의 자동 자막 스크
 스크립트:
 `;
 
+// ---------- 기본 단어장 (앱과 함께 배포되는 덱) ----------
+let LIB = null;
+async function loadLibrary() {
+  if (LIB) return LIB;
+  try { LIB = await fetch('library/index.json').then((r) => r.json()); } catch (e) { LIB = []; }
+  return LIB;
+}
+function libraryHTML() {
+  if (!LIB || !LIB.length) return '';
+  return `<section class="panel"><h3>기본 단어장</h3>${LIB.map((d) => {
+    const have = findDeckByName(d.name);
+    return `<div class="lib"><div><b>${esc(d.name)}</b><p class="muted">${esc(d.desc || '')}</p></div>
+      <button class="${have ? '' : 'primary'}" data-act="get-lib" data-file="${esc(d.file)}">${have ? '다시 받기' : '받기'}</button></div>`;
+  }).join('')}<p class="muted">이미 외우던 단어는 진도가 그대로 이어져요.</p></section>`;
+}
+async function getLibrary(file, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '받는 중…'; }
+  try { importText(await fetch(file).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); }), ''); }
+  catch (e) { toast('받지 못했어요. 인터넷 연결을 확인해 주세요.'); if (btn) { btn.disabled = false; btn.textContent = '받기'; } }
+}
+
 function renderImport() {
   showTabs(true, 'decks');
+  if (!LIB) loadLibrary().then(() => { if (view === 'import') renderImport(); });
   $('#app').innerHTML = `<header class="top"><button class="icon" data-act="go" data-view="decks">‹</button><h1 class="sm">가져오기</h1></header>
+    ${libraryHTML()}
     <section class="panel"><h3>1. GPT로 단어장 만들기</h3>
       <p class="muted">프롬프트를 복사해서 ChatGPT에 붙이고, 그 아래에 유튜브 스크립트를 붙여넣으세요.</p>
       <button data-act="copy-prompt">프롬프트 복사</button>
@@ -851,6 +882,7 @@ const actions = {
   'del-word': (el) => { if (confirm('이 단어를 지울까요?')) { deleteNote(el.dataset.id); save(); closeModal(); render(); } },
   'reset-word': (el) => { resetNote(S.notes[el.dataset.id]); save(); closeModal(); render(); toast('새 단어로 되돌렸어요'); },
   close: () => closeModal(),
+  'get-lib': (el) => getLibrary(el.dataset.file, el),
   pend: (el) => { resolvePending(el.dataset.id, el.dataset.how); save(); render(); },
   'pend-all': (el) => { for (const p of [...(S.pending || [])]) resolvePending(p.id, el.dataset.how); save(); render(); },
   'copy-prompt': async () => {

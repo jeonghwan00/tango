@@ -9,6 +9,8 @@
 - 하루 새 단어 수 설정, 그날만 +10/+20/+50
 - 오늘 틀린 것 다시보기 (복습 일정에는 영향 없음)
 - 덱 내보내기/가져오기 (`tango-deck-v1` JSON), 전체 백업/복원
+- 기본 단어장 **일본어 기본 1000단어** 내장 (50개 장 × 20단어, 모든 단어에 예문). `library/` 에 있고 오프라인 캐시에 포함
+- 단어장 사이에 겹치는 단어는 하나로 합쳐 진도 공유, 뜻이 다르면 확인 화면
 
 데이터는 기기의 localStorage 에만 있다. 서버도 계정도 없다.
 
@@ -43,6 +45,6 @@ python3 -m http.server 8765   # http://127.0.0.1:8765
 
 배포는 GitHub Pages (main 브랜치 루트). 앱 파일을 고치면 `sw.js` 의 `CACHE` 버전을 올린다. 그래야 폰에서 새 버전을 받는다 (다음 실행 때 적용).
 
-`decks/` 는 개인 학습 자료라 저장소에 올리지 않는다 (.gitignore).
+`library/` 의 덱은 새로 쓴 단어 목록과 예문이라 공개한다. `decks/` 는 개인 학습 자료라 저장소에 올리지 않는다 (.gitignore).
 
 `vendor/ts-fsrs.umd.js` — [ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs) 5.4.1, MIT.
