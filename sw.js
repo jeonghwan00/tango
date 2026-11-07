@@ -1,5 +1,5 @@
 // 오프라인용: 앱 파일을 캐시에 두고, 온라인일 때 뒤에서 새 버전을 받아 둔다.
-const CACHE = 'tango-v9';
+const CACHE = 'tango-v10';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'vendor/ts-fsrs.umd.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png', 'library/index.json', 'library/jp1000.json'];
 
 self.addEventListener('install', (e) => {

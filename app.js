@@ -980,10 +980,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && vi
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // 새 버전이 설치되면 바로 적용한다. 공부 중이면 끝난 뒤(홈으로 갈 때) 적용.
-  const hadController = !!navigator.serviceWorker.controller;
+  let hadController = !!navigator.serviceWorker.controller;
   let pendingReload = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController) return; // 첫 설치는 새로고침할 필요 없음
+    if (!hadController) { hadController = true; return; } // 첫 설치는 새로고침할 필요 없음
     if (view === 'study' || view === 'cram') { pendingReload = true; toast('새 버전을 받았어요. 홈으로 가면 적용돼요.'); }
     else location.reload();
   });
