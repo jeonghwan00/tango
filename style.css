@@ -92,7 +92,7 @@ textarea { resize: vertical; }
 .study-top .q { flex: 1; display: flex; justify-content: center; gap: 14px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .q .rv { color: var(--good); } .q .ln { color: var(--again); } .q .nw { color: #2563eb; }
 .furi-btn { font-family: "Hiragino Sans", sans-serif; }
-.furi-btn.on { background: var(--ink); color: var(--bg); }
+.furi-btn.on, .pron-btn.on { background: var(--ink); color: var(--bg); }
 .study { flex: 1; display: flex; }
 .card {
   flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
@@ -122,6 +122,7 @@ rt { font-size: .5em; color: var(--muted); font-family: "Hiragino Sans", sans-se
 /* 후리가나 끄기: 자리는 남겨 두어 글자가 출렁이지 않게 */
 .nofuri .face rt, .nofuri .face .furi { visibility: hidden; }
 .nofuri .face .always rt { visibility: visible; }
+.nopron .pron { display: none; }
 
 .study-bottom {
   position: sticky; bottom: 0; padding: 10px 0 calc(env(safe-area-inset-bottom) + 6px);

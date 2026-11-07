@@ -7,7 +7,7 @@ const F = fsrs(generatorParameters({ enable_fuzz: true }));
 const KEY = 'tango.v1';
 const MIN = 6e4, DAY = 864e5, ROLL = 4 * 3600e3; // 하루는 새벽 4시에 바뀐다
 const LONG = 21, STABLE = 7;                      // 장기기억 / 안정 기준 (안정도, 일)
-const DIRS = { jk: '일→한', kj: '한→일', sj: '문장' };
+const DIRS = { hk: 'かな→한', jk: '漢字→한', kj: '한→일', sj: '문장' };
 const GRADES = [
   { g: Rating.Again, label: '몰랐음', cls: 'again' },
   { g: Rating.Hard, label: '애매함', cls: 'hard' },
@@ -30,7 +30,7 @@ let S;
 function defaults() {
   return {
     v: 1, seq: 0, decks: {}, notes: {}, cards: {},
-    settings: { newPerDay: 20, dirs: { jk: true, kj: true, sj: false }, furigana: true, deck: 'all' },
+    settings: { newPerDay: 20, dirs: { hk: true, jk: true, kj: true, sj: false }, furigana: true, pron: true, deck: 'all' },
     daily: { date: '', newDone: 0, extra: 0, wrong: [] },
     history: {},
   };
@@ -48,6 +48,12 @@ function hydrate(obj) {
   s.settings.dirs = Object.assign(defaults().settings.dirs, (obj.settings || {}).dirs || {});
   s.daily = Object.assign(defaults().daily, obj.daily || {});
   for (const c of Object.values(s.cards)) reviveCard(c);
+  // 나중에 생긴 방향(かな→한 등)의 카드를 기존 단어에도 만들어 준다
+  for (const n of Object.values(s.notes)) for (const dir of Object.keys(DIRS)) {
+    if (n.cards[dir] && s.cards[n.cards[dir]]) continue;
+    const c = { id: uid(), noteId: n.id, dir, f: createEmptyCard(new Date()), introAt: 0 };
+    s.cards[c.id] = c; n.cards[dir] = c.id;
+  }
   return s;
 }
 function load() {
@@ -107,7 +113,11 @@ function modeDirs(mode) {
   const on = Object.keys(DIRS).filter((d) => S.settings.dirs[d]);
   return on.length ? on : ['jk'];
 }
-function usable(c, n) { return c.dir !== 'sj' || !!n.sentence; }
+function usable(c, n) {
+  if (c.dir === 'sj') return !!n.sentence;
+  if (c.dir === 'hk') return !!n.reading && KANJI.test(n.word); // 한자 없는 단어는 漢字→한 과 같아서 뺀다
+  return true;
+}
 function pool(mode) {
   const dirs = modeDirs(mode), out = [];
   for (const n of Object.values(S.notes)) {
@@ -134,7 +144,7 @@ function newCandidates(mode) {
 function introduce(mode) {
   const cand = newCandidates(mode)[0];
   if (!cand) return null;
-  const now = Date.now(), ord = { jk: 0, kj: 1, sj: 2 };
+  const now = Date.now(), ord = { hk: 0, jk: 1, kj: 2, sj: 3 };
   cand.cs.sort((a, b) => ord[a.dir] - ord[b.dir]).forEach((c, i) => { c.introAt = now + i * 3 * MIN; });
   if (!cand.n.intro) { cand.n.intro = dayKey(); hist().newWords++; }
   S.daily.newDone++;
@@ -215,6 +225,57 @@ function streak() {
   return n;
 }
 
+// ---------- 한글 발음 ----------
+// 히라가나 읽기에서 만든다. 장음은 대시: せんしゅう → 센슈-, きょう → 쿄-, カーディガン → 카-디간
+const KROWS = [['あいうえお', '아이우에오'], ['かきくけこ', '카키쿠케코'], ['がぎぐげご', '가기구게고'], ['さしすせそ', '사시스세소'],
+  ['ざじずぜぞ', '자지즈제조'], ['たちつてと', '타치츠테토'], ['だぢづでど', '다지즈데도'], ['なにぬねの', '나니누네노'],
+  ['はひふへほ', '하히후헤호'], ['ばびぶべぼ', '바비부베보'], ['ぱぴぷぺぽ', '파피푸페포'], ['まみむめも', '마미무메모'],
+  ['らりるれろ', '라리루레로'], ['ぁぃぅぇぉ', '아이우에오']];
+const KTAB = {};
+for (const [k, h] of KROWS) [...k].forEach((ch, i) => { KTAB[ch] = [h[i], 'aiueo'[i]]; });
+Object.assign(KTAB, { や: ['야', 'a'], ゆ: ['유', 'u'], よ: ['요', 'o'], ゃ: ['야', 'a'], ゅ: ['유', 'u'], ょ: ['요', 'o'], わ: ['와', 'a'], を: ['오', 'o'], ゐ: ['이', 'i'], ゑ: ['에', 'e'], ゔ: ['부', 'u'] });
+const YOON = { き: '캬큐쿄', ぎ: '갸규교', し: '샤슈쇼', じ: '자주조', ち: '차추초', ぢ: '자주조', に: '냐뉴뇨', ひ: '햐휴효', び: '뱌뷰뵤', ぴ: '퍄퓨표', み: '먀뮤묘', り: '랴류료' };
+const SMALLV = { ふぁ: ['화', 'a'], ふぃ: ['휘', 'i'], ふぇ: ['페', 'e'], ふぉ: ['포', 'o'], てぃ: ['티', 'i'], でぃ: ['디', 'i'], とぅ: ['투', 'u'], どぅ: ['두', 'u'],
+  うぃ: ['위', 'i'], うぇ: ['웨', 'e'], うぉ: ['워', 'o'], ちぇ: ['체', 'e'], しぇ: ['셰', 'e'], じぇ: ['제', 'e'], いぇ: ['예', 'e'], ゔぁ: ['바', 'a'], ゔぃ: ['비', 'i'], ゔぇ: ['베', 'e'], ゔぉ: ['보', 'o'] };
+const PURE = 'あいうえお';
+const toHira = (s) => String(s || '').replace(/[\u30A1-\u30F6]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+function addFinal(out, fin) { // fin: 4=ㄴ, 16=ㅁ, 19=ㅅ, 21=ㅇ
+  const last = out[out.length - 1], code = last ? last.charCodeAt(0) - 0xAC00 : -1;
+  if (code >= 0 && code < 11172 && code % 28 === 0) out[out.length - 1] = String.fromCharCode(last.charCodeAt(0) + fin);
+  else out.push(fin === 19 ? '' : '응');
+}
+function hangulPron(reading, pos = '') {
+  const raw = String(reading || ''), s = toHira(raw);
+  if (!s || /[\u3400-\u9FFFa-zA-Z가-힣]/.test(s)) return '';
+  const verb = /동사/.test(pos);
+  const out = []; let prev = null; // prev: 바로 앞 음절의 모음 (ん/っ 이 끼면 null)
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i], two = s.slice(i, i + 2);
+    if (ch === 'ー') { if (prev) out.push('-'); continue; }
+    if (ch === 'ん') { // 뒤 소리에 따라 ㄴ/ㅇ/ㅁ: 산포 → 삼포, 쇼핀구 → 쇼핑구
+      const nx = s[i + 1] || ' ';
+      addFinal(out, 'かきくけこがぎぐげご'.includes(nx) ? 21 : 'ばびぶべぼぱぴぷぺぽまみむめも'.includes(nx) ? 16 : 4);
+      prev = null; continue;
+    }
+    if (ch === 'っ') { if (i < s.length - 1) addFinal(out, 19); prev = null; continue; }
+    let unit = null;
+    if (SMALLV[two]) { unit = SMALLV[two]; i++; }
+    else if (YOON[ch] && 'ゃゅょ'.includes(s[i + 1])) { const k = 'ゃゅょ'.indexOf(s[i + 1]); unit = [YOON[ch][k], 'auo'[k]]; i++; }
+    else if (KTAB[ch]) unit = KTAB[ch];
+    if (!unit) { out.push(ch); prev = null; continue; }
+    const [h, v] = unit;
+    // 가타카나(외래어)는 ー 만 장음: ネイビー → 네이비-
+    if (prev && PURE.includes(ch) && !/[\u30A1-\u30F6]/.test(raw[i])) {
+      const isLong = v === prev || (v === 'u' && prev === 'o') || (v === 'i' && prev === 'e');
+      const verbEnd = verb && ch === 'う' && i === s.length - 1; // 思う, 会う 의 끝 う 는 장음이 아니다
+      if (isLong && !verbEnd) { out.push('-'); continue; }
+    }
+    out.push(h); prev = v;
+  }
+  return out.join('');
+}
+const pronOf = (n) => hangulPron(n.reading || (!KANJI.test(n.word) ? n.word : ''), n.pos) || n.pron || '';
+
 // ---------- 후리가나 ----------
 // "今日[きょう]は" 형식. 한자 덩어리 바로 뒤의 [읽기] 가 루비가 된다.
 function segments(s) {
@@ -263,7 +324,7 @@ function wordHTML(n) {
 // ---------- 카드 면 ----------
 function wordBlock(n, always) {
   return `<div class="word ${always ? 'always' : ''}">${wordHTML(n)}</div>` +
-    (n.pron ? `<div class="pron ${always ? '' : 'furi'}">${esc(n.pron)}</div>` : '');
+    (pronOf(n) ? `<div class="pron">${esc(pronOf(n))}</div>` : '');
 }
 function sentBlock(n, withKo = true) {
   if (!n.sentence) return '';
@@ -273,6 +334,11 @@ function sentBlock(n, withKo = true) {
 }
 const posTag = (n) => (n.pos ? `<div class="pos">${esc(n.pos)}</div>` : '');
 function face(c, n, back) {
+  if (c.dir === 'hk') {
+    return posTag(n) + `<div class="word kana" lang="ja">${esc(n.reading)}</div>` +
+      (pronOf(n) ? `<div class="pron">${esc(pronOf(n))}</div>` : '') +
+      (back ? `<hr><div class="word always">${wordHTML(n)}</div><div class="meaning">${esc(n.meaning)}</div>${sentBlock(n)}` : '');
+  }
   if (c.dir === 'jk') {
     return posTag(n) + wordBlock(n, back) + (back ? `<hr><div class="meaning">${esc(n.meaning)}</div>${sentBlock(n)}` : '');
   }
@@ -302,7 +368,10 @@ let session = { mode: 'flip', card: null, flipped: false, n: 0, undo: null, type
 let cram = null;
 let wordsDeck = null, wordsQuery = '';
 
-function setFuriClass() { document.body.classList.toggle('nofuri', !S.settings.furigana); }
+function setFuriClass() {
+  document.body.classList.toggle('nofuri', !S.settings.furigana);
+  document.body.classList.toggle('nopron', !S.settings.pron);
+}
 function showTabs(on, tab) {
   $('#tabs').hidden = !on;
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
@@ -381,6 +450,7 @@ function renderStudy() {
       <div class="q"><span class="rv">${c.review}</span><span class="ln">${c.learn}</span><span class="nw">${c.fresh}</span></div>
       <button class="icon" data-act="undo" ${session.undo ? '' : 'disabled'} aria-label="되돌리기">↶</button>
       <button class="icon furi-btn ${S.settings.furigana ? 'on' : ''}" data-act="furi" aria-label="후리가나">あ</button>
+      <button class="icon pron-btn ${S.settings.pron ? 'on' : ''}" data-act="pron" aria-label="한글 발음">가</button>
     </header>`;
   if (!card) {
     const wrong = S.daily.wrong.filter((id) => S.cards[id]).length;
@@ -427,7 +497,8 @@ function renderCram() {
   const id = cram.queue[0];
   const head = `<header class="study-top"><button class="icon" data-act="home">✕</button>
     <div class="q"><span>다시보기 ${cram.total - cram.queue.length}/${cram.total}</span></div>
-    <button class="icon furi-btn ${S.settings.furigana ? 'on' : ''}" data-act="furi">あ</button></header>`;
+    <button class="icon furi-btn ${S.settings.furigana ? 'on' : ''}" data-act="furi">あ</button>
+    <button class="icon pron-btn ${S.settings.pron ? 'on' : ''}" data-act="pron">가</button></header>`;
   if (!id) {
     $('#app').innerHTML = head + `<section class="done"><div class="done-mark">✓</div><h2>다시보기 끝</h2><p class="muted">다시보기는 복습 일정에 영향을 주지 않아요.</p><button class="primary" data-act="home">홈으로</button></section>`;
     return;
@@ -466,7 +537,7 @@ function renderWords() {
 }
 function wordsListHTML() {
   const q = wordsQuery.trim().toLowerCase();
-  const ns = notesOf(wordsDeck).filter((n) => !q || [n.word, n.reading, n.meaning, n.pron].some((x) => String(x).toLowerCase().includes(q)));
+  const ns = notesOf(wordsDeck).filter((n) => !q || [n.word, n.reading, n.meaning, pronOf(n)].some((x) => String(x).toLowerCase().includes(q)));
   return `<ul class="words">${ns.map((n) => `<li><button data-act="edit-word" data-id="${n.id}"><span class="w" lang="ja">${esc(plainOf(n.word))}</span><span class="r" lang="ja">${esc(n.reading !== n.word ? n.reading : '')}</span><span class="m">${esc(n.meaning)}</span>${statusLabel(n)}</button></li>`).join('')}</ul>
     <p class="muted center">${ns.length}단어</p>`;
 }
@@ -481,7 +552,6 @@ const GPT_PROMPT = `아래는 일본어 유튜브 영상의 자동 자막 스크
     {
       "word": "先週",
       "reading": "せんしゅう",
-      "pron": "센슈우",
       "meaning": "지난주",
       "pos": "명사",
       "sentence": "今日[きょう]は先週[せんしゅう]友達[ともだち]と買[か]い物[もの]に行[い]った時[とき]の話[はなし]をしようと思[おも]います。",
@@ -494,7 +564,7 @@ const GPT_PROMPT = `아래는 일본어 유튜브 영상의 자동 자막 스크
 규칙:
 - word: 사전형. 한자가 있으면 한자로. 영상 속 문형(예: 〜てみたいんだけど)도 word 로 넣어.
 - reading: 히라가나 읽기 하나 (가타카나 단어는 가타카나 그대로).
-- pron: 한글 발음. meaning: 짧은 한국어 뜻. pos: 품사(명사/동사/형용사/부사/표현/문형 등).
+- meaning: 짧은 한국어 뜻. pos: 품사(명사/동사/형용사/부사/표현/문형 등).
 - sentence: 스크립트에서 그 단어가 실제로 나온 문장. 자동 자막의 오인식·띄어쓰기·구두점은 바로잡아. 한자 덩어리마다 바로 뒤에 [읽기]를 붙이고, 가나에는 붙이지 마.
 - sentence_ko: 문장 번역. time: 그 문장의 타임스탬프(mm:ss).
 - 같은 단어는 한 번만. 스크립트가 반복되면 처음 한 번만 써.
@@ -605,11 +675,12 @@ function renderSettings() {
       <div class="stepper"><button data-act="npd" data-d="-5">−</button><b>${st.newPerDay}</b><button data-act="npd" data-d="5">＋</button></div>
       <p class="muted">더 하고 싶은 날은 홈에서 +10 / +20 / +50 으로 그날만 늘릴 수 있어요.</p></section>
     <section class="panel"><h3>카드 공부 방향</h3>
-      ${Object.entries(DIRS).map(([k, v]) => `<label class="check"><input type="checkbox" data-change="dir" data-dir="${k}" ${st.dirs[k] ? 'checked' : ''}> ${v}<span class="muted">${{ jk: '단어 보고 뜻', kj: '뜻 보고 단어', sj: '예문 속 단어 뜻' }[k]}</span></label>`).join('')}
+      ${Object.entries(DIRS).map(([k, v]) => `<label class="check"><input type="checkbox" data-change="dir" data-dir="${k}" ${st.dirs[k] ? 'checked' : ''}> ${v}<span class="muted">${{ hk: '히라가나 보고 뜻', jk: '한자 보고 뜻', kj: '뜻 보고 단어', sj: '예문 속 단어 뜻' }[k]}</span></label>`).join('')}
       <p class="muted">방향마다 기억 기록이 따로 쌓여요. 타이핑은 항상 한→일이에요.</p></section>
-    <section class="panel"><h3>후리가나</h3>
-      <label class="check"><input type="checkbox" data-change="furi" ${st.furigana ? 'checked' : ''}> 앞면에 후리가나·한글 발음 보이기</label>
-      <p class="muted">공부 중에도 오른쪽 위 あ 버튼으로 바로 켜고 끌 수 있어요.</p></section>
+    <section class="panel"><h3>후리가나 · 한글 발음</h3>
+      <label class="check"><input type="checkbox" data-change="furi" ${st.furigana ? 'checked' : ''}> 앞면에 후리가나 보이기</label>
+      <label class="check"><input type="checkbox" data-change="pron" ${st.pron ? 'checked' : ''}> 한글 발음 보이기 <span class="muted">센슈-</span></label>
+      <p class="muted">공부 중에도 오른쪽 위 あ / 가 버튼으로 따로 켜고 끌 수 있어요.</p></section>
     <section class="panel"><h3>백업</h3>
       <p class="muted">학습 기록은 이 폰에만 있어요. 가끔 백업해서 파일 앱이나 iCloud에 보관하세요. 마지막 백업: ${lb}</p>
       <div class="row"><button data-act="backup">백업 내보내기</button><button data-act="pick-file" data-kind="backup">백업 불러오기</button></div></section>
@@ -627,7 +698,7 @@ function wordForm(n, deckId) {
   const decks = Object.values(S.decks);
   const deckField = n ? '' : `<label><span>단어장</span><select name="deck">${decks.map((d) => `<option value="${d.id}" ${d.id === deckId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="__new">＋ 새 단어장…</option></select></label>`;
   return `<form data-submit="save-word" data-id="${n?.id || ''}"><h3>${n ? '단어 수정' : '단어 추가'}</h3>${deckField}
-    ${f('word', '단어 *', '先週', true)}${f('reading', '읽기', 'せんしゅう', true)}${f('pron', '한글 발음', '센슈우')}${f('meaning', '뜻 *', '지난주')}${f('pos', '품사', '명사')}
+    ${f('word', '단어 *', '先週', true)}${f('reading', '읽기', 'せんしゅう', true)}${f('meaning', '뜻 *', '지난주')}${f('pos', '품사', '명사')}
     ${f('sentence', '예문', '今日[きょう]は… (한자[읽기])', true, true)}${f('sentence_ko', '예문 뜻', '', false, true)}
     <div class="row"><button type="button" data-act="close">취소</button><button class="primary" type="submit">저장</button></div>
     ${n ? `<div class="row"><button type="button" class="chip" data-act="reset-word" data-id="${n.id}">진도 초기화</button><button type="button" class="chip danger" data-act="del-word" data-id="${n.id}">삭제</button></div>` : ''}</form>`;
@@ -649,6 +720,7 @@ const actions = {
   },
   undo: () => undo(),
   furi: () => { S.settings.furigana = !S.settings.furigana; save(); setFuriClass(); $('.furi-btn')?.classList.toggle('on', S.settings.furigana); },
+  pron: () => { S.settings.pron = !S.settings.pron; save(); setFuriClass(); $('.pron-btn')?.classList.toggle('on', S.settings.pron); },
   more: (el) => {
     S.daily.extra += Number(el.dataset.n); save();
     if (el.dataset.cont) { session.card = nextCard(session.mode); session.flipped = false; renderStudy(); } else render();
@@ -700,6 +772,7 @@ document.addEventListener('change', (e) => {
   if (k === 'deck') { S.settings.deck = el.value; save(); render(); }
   if (k === 'dir') { S.settings.dirs[el.dataset.dir] = el.checked; save(); }
   if (k === 'furi') { S.settings.furigana = el.checked; save(); setFuriClass(); }
+  if (k === 'pron') { S.settings.pron = el.checked; save(); setFuriClass(); }
 });
 document.addEventListener('input', (e) => {
   if (e.target.dataset.input === 'q') {
