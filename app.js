@@ -978,4 +978,19 @@ load();
 render();
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'home') render(); });
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  // 새 버전이 설치되면 바로 적용한다. 공부 중이면 끝난 뒤(홈으로 갈 때) 적용.
+  const hadController = !!navigator.serviceWorker.controller;
+  let pendingReload = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return; // 첫 설치는 새로고침할 필요 없음
+    if (view === 'study' || view === 'cram') { pendingReload = true; toast('새 버전을 받았어요. 홈으로 가면 적용돼요.'); }
+    else location.reload();
+  });
+  const origHome = actions.home;
+  actions.home = (...a) => { if (pendingReload) location.reload(); else origHome(...a); };
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    // 앱을 다시 볼 때마다 새 버전 확인 (홈 화면 앱은 잘 안 꺼지므로)
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
