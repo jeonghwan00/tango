@@ -49,6 +49,10 @@ function hydrate(obj) {
   s.daily = Object.assign(defaults().daily, obj.daily || {});
   for (const c of Object.values(s.cards)) reviveCard(c);
   // 나중에 생긴 방향(かな→한 등)의 카드를 기존 단어에도 만들어 준다
+  for (const n of Object.values(s.notes)) {
+    if (!n.deckIds) { n.deckIds = [n.deckId]; delete n.deckId; }
+    n.more ||= [];
+  }
   for (const n of Object.values(s.notes)) for (const dir of Object.keys(DIRS)) {
     if (n.cards[dir] && s.cards[n.cards[dir]]) continue;
     const c = { id: uid(), noteId: n.id, dir, f: createEmptyCard(new Date()), introAt: 0 };
@@ -86,8 +90,11 @@ function cleanNote(raw) {
   if (!n.reading && !KANJI.test(n.word)) n.reading = n.word;
   return n;
 }
+// 같은 단어(표기+읽기)는 단어장이 달라도 하나. 진도도 하나다.
+const noteKey = (n) => plainOf(n.word) + '|' + toHira(n.reading);
+function findNote(raw) { const k = noteKey(raw); return Object.values(S.notes).find((n) => noteKey(n) === k); }
 function addNote(deckId, raw) {
-  const n = { id: uid(), deckId, order: ++S.seq, intro: '', ...cleanNote(raw), cards: {} };
+  const n = { id: uid(), deckIds: [deckId], more: [], order: ++S.seq, intro: '', ...cleanNote(raw), cards: {} };
   for (const dir of Object.keys(DIRS)) {
     const c = { id: uid(), noteId: n.id, dir, f: createEmptyCard(new Date()), introAt: 0 };
     S.cards[c.id] = c; n.cards[dir] = c.id;
@@ -104,10 +111,47 @@ function resetNote(n) {
   n.intro = '';
   for (const cid of Object.values(n.cards)) { const c = S.cards[cid]; c.f = createEmptyCard(new Date()); c.introAt = 0; }
 }
-function notesOf(deckId) { return Object.values(S.notes).filter((n) => n.deckId === deckId).sort((a, b) => a.order - b.order); }
+function notesOf(deckId) { return Object.values(S.notes).filter((n) => n.deckIds.includes(deckId)).sort((a, b) => a.order - b.order); }
+// 이미 있는 단어를 다른 단어장에서 또 만나면: 단어장 추가, 새 예문 보관, 다른 뜻은 이어 붙임
+function mergeInto(n, deckId, raw) {
+  const c = cleanNote(raw);
+  if (!n.deckIds.includes(deckId)) n.deckIds.push(deckId);
+  const known = [n.sentence, ...n.more.map((m) => m.sentence)].map(plainOf);
+  if (c.sentence && !known.includes(plainOf(c.sentence))) {
+    if (!n.sentence) Object.assign(n, { sentence: c.sentence, sentence_ko: c.sentence_ko, time: c.time });
+    else n.more.push({ sentence: c.sentence, sentence_ko: c.sentence_ko, time: c.time, deckId });
+  }
+  // 뜻이 다르면 바로 바꾸지 않고 확인 목록에 올린다
+  if (meaningDiffers(n.meaning, c.meaning)) {
+    (S.pending ||= []).push({ id: uid(), noteId: n.id, deckId, raw: c });
+    return true;
+  }
+  return false;
+}
+function meaningDiffers(a, b) {
+  const parts = (x) => String(x || '').split(/\s*[\/,·;]\s*/).map((m) => m.trim()).filter(Boolean);
+  const have = parts(a);
+  return !!b && !a.includes(b) && parts(b).some((m) => !have.includes(m));
+}
+// 확인 목록 처리. how: merge | keep | replace | split
+function resolvePending(pid, how) {
+  const i = (S.pending || []).findIndex((p) => p.id === pid); if (i < 0) return;
+  const p = S.pending[i], n = S.notes[p.noteId];
+  S.pending.splice(i, 1);
+  if (!n) return;
+  if (how === 'merge') n.meaning = `${n.meaning} / ${p.raw.meaning}`;
+  if (how === 'replace') n.meaning = p.raw.meaning;
+  if (how === 'split') {
+    // 이 단어장에서는 별개 단어로: 연결과 예문을 떼고 새 카드를 만든다
+    n.deckIds = n.deckIds.filter((x) => x !== p.deckId);
+    n.more = n.more.filter((m) => m.deckId !== p.deckId);
+    if (!n.deckIds.length) deleteNote(n.id);
+    addNote(p.deckId, p.raw);
+  }
+}
 
 // ---------- 스케줄 ----------
-function inDeck(n) { const d = S.settings.deck; return d === 'all' || !S.decks[d] || n.deckId === d; }
+function inDeck(n) { const d = S.settings.deck; return d === 'all' || !S.decks[d] || n.deckIds.includes(d); }
 function modeDirs(mode) {
   if (mode === 'type') return ['kj'];
   const on = Object.keys(DIRS).filter((d) => S.settings.dirs[d]);
@@ -326,11 +370,15 @@ function wordBlock(n, always) {
   return `<div class="word ${always ? 'always' : ''}">${wordHTML(n)}</div>` +
     (pronOf(n) ? `<div class="pron">${esc(pronOf(n))}</div>` : '');
 }
-function sentBlock(n, withKo = true) {
+function oneSent(n, e, deckId) {
+  const deck = S.decks[deckId]?.name;
+  return `<div class="sent"><div class="jp">${furi(e.sentence, n.word)}</div>` +
+    (e.sentence_ko ? `<div class="ko">${esc(e.sentence_ko)}</div>` : '') +
+    (e.time || (deck && n.deckIds.length > 1) ? `<div class="time">${deck && n.deckIds.length > 1 ? esc(deck) + ' ' : ''}${e.time ? '▶ ' + esc(e.time) : ''}</div>` : '') + '</div>';
+}
+function sentBlock(n) {
   if (!n.sentence) return '';
-  return `<div class="sent"><div class="jp">${furi(n.sentence, n.word)}</div>` +
-    (withKo && n.sentence_ko ? `<div class="ko">${esc(n.sentence_ko)}</div>` : '') +
-    (n.time ? `<div class="time">▶ ${esc(n.time)}</div>` : '') + '</div>';
+  return oneSent(n, n, n.deckIds[0]) + n.more.map((m) => oneSent(n, m, m.deckId)).join('');
 }
 const posTag = (n) => (n.pos ? `<div class="pos">${esc(n.pos)}</div>` : '');
 function face(c, n, back) {
@@ -384,6 +432,7 @@ function render() {
   if (view === 'words') return renderWords();
   if (view === 'import') return renderImport();
   if (view === 'settings') return renderSettings();
+  if (view === 'pending') return renderPending();
   return renderHome();
 }
 function deckSelect() {
@@ -516,10 +565,12 @@ function renderDecks() {
   const decks = Object.values(S.decks).sort((a, b) => a.created - b.created);
   $('#app').innerHTML = `<header class="top"><h1>단어장</h1></header>
     <div class="row"><button class="primary" data-act="go" data-view="import">＋ 가져오기</button><button data-act="add-word">하나씩 추가</button></div>
+    ${(S.pending || []).length ? `<button class="notice" data-act="go" data-view="pending">뜻 확인이 필요한 단어 ${S.pending.length}개 ›</button>` : ''}
     <ul class="decks">${decks.map((d) => {
       const ns = notesOf(d.id);
       const long = ns.filter((n) => noteStrength(n).tag === 'long').length;
-      return `<li><button class="deck" data-act="words" data-id="${d.id}"><b>${esc(d.name)}</b><span class="muted">${ns.length}단어 · 장기 ${long}</span></button>
+      const shared = ns.filter((n) => n.deckIds.length > 1).length;
+      return `<li><button class="deck" data-act="words" data-id="${d.id}"><b>${esc(d.name)}</b><span class="muted">${ns.length}단어 · 장기 ${long}${shared ? ` · 겹침 ${shared}` : ''}</span></button>
         <div class="deck-acts"><button class="chip" data-act="share-deck" data-id="${d.id}">내보내기</button><button class="chip" data-act="rename-deck" data-id="${d.id}">이름</button><button class="chip danger" data-act="del-deck" data-id="${d.id}">삭제</button></div></li>`;
     }).join('') || '<li class="muted">단어장이 없어요.</li>'}</ul>`;
 }
@@ -540,6 +591,24 @@ function wordsListHTML() {
   const ns = notesOf(wordsDeck).filter((n) => !q || [n.word, n.reading, n.meaning, pronOf(n)].some((x) => String(x).toLowerCase().includes(q)));
   return `<ul class="words">${ns.map((n) => `<li><button data-act="edit-word" data-id="${n.id}"><span class="w" lang="ja">${esc(plainOf(n.word))}</span><span class="r" lang="ja">${esc(n.reading !== n.word ? n.reading : '')}</span><span class="m">${esc(n.meaning)}</span>${statusLabel(n)}</button></li>`).join('')}</ul>
     <p class="muted center">${ns.length}단어</p>`;
+}
+
+// ---------- 뜻 확인 ----------
+function renderPending() {
+  showTabs(true, 'decks');
+  const list = (S.pending || []).filter((p) => S.notes[p.noteId]);
+  if (!list.length) { S.pending = []; save(); view = 'decks'; return render(); }
+  $('#app').innerHTML = `<header class="top"><button class="icon" data-act="go" data-view="decks">‹</button><h1 class="sm">뜻이 다른 단어 ${list.length}개</h1></header>
+    <p class="muted">이미 외우던 단어인데 새 단어장에서는 뜻이 다르게 적혀 있어요. 진도는 그대로 두고 뜻만 정하면 돼요. 완전히 다른 단어라면 따로 외우기를 고르세요.</p>
+    <div class="row"><button class="chip" data-act="pend-all" data-how="merge">모두 합치기</button><button class="chip" data-act="pend-all" data-how="keep">모두 지금 뜻 유지</button></div>
+    <ul class="pending">${list.map((p) => {
+      const n = S.notes[p.noteId], deck = S.decks[p.deckId]?.name || '';
+      return `<li><div class="pw"><span lang="ja" class="w">${esc(plainOf(n.word))}</span> <span lang="ja" class="muted">${esc(n.reading)}</span></div>
+        <div class="pm"><span class="muted">지금</span> ${esc(n.meaning)}</div>
+        <div class="pm"><span class="muted">새로 · ${esc(deck)}</span> ${esc(p.raw.meaning)}</div>
+        ${p.raw.sentence ? `<div class="sent"><div class="jp">${furi(p.raw.sentence, n.word)}</div>${p.raw.sentence_ko ? `<div class="ko">${esc(p.raw.sentence_ko)}</div>` : ''}</div>` : ''}
+        <div class="pend-acts"><button data-act="pend" data-id="${p.id}" data-how="merge">합치기</button><button data-act="pend" data-id="${p.id}" data-how="keep">지금 뜻</button><button data-act="pend" data-id="${p.id}" data-how="replace">새 뜻</button><button data-act="pend" data-id="${p.id}" data-how="split">따로 외우기</button></div></li>`;
+    }).join('')}</ul>`;
 }
 
 // ---------- 가져오기 ----------
@@ -609,31 +678,32 @@ function parseLoose(text) {
   return objs;
 }
 function importDeckObjects(objs, nameOverride) {
-  let added = 0, skipped = 0; const names = new Set();
+  let added = 0, shared = 0, skipped = 0, conflicts = 0; const names = new Set();
   for (const o of objs) {
     if (o && o.notes && o.cards && o.settings) throw new Error('backup');
     const cards = Array.isArray(o) ? o : o.cards || [];
     const deck = ensureDeck(nameOverride || o.deck || o.name);
     names.add(deck.name);
-    const seen = new Set(notesOf(deck.id).map((n) => plainOf(n.word) + '|' + n.reading));
     for (const raw of cards) {
       const n = cleanNote(raw || {});
       if (!n.word || !n.meaning) { skipped++; continue; }
-      const k = plainOf(n.word) + '|' + n.reading;
-      if (seen.has(k)) { skipped++; continue; }
-      seen.add(k); addNote(deck.id, n); added++;
+      const old = findNote(n);
+      if (!old) { addNote(deck.id, n); added++; continue; }
+      const inDeckAlready = old.deckIds.includes(deck.id);
+      if (mergeInto(old, deck.id, n)) conflicts++;
+      if (inDeckAlready) skipped++; else shared++;
     }
   }
   save();
-  return { added, skipped, names: [...names] };
+  return { added, shared, skipped, conflicts, names: [...names] };
 }
 function importText(text, nameOverride) {
   try {
     const objs = parseLoose(text);
     if (objs.length === 1 && objs[0].notes && objs[0].settings) return restoreBackup(objs[0]);
     const r = importDeckObjects(objs, nameOverride);
-    toast(`${r.names.join(', ')}에 ${r.added}개 추가${r.skipped ? ` (중복·빈 항목 ${r.skipped}개 건너뜀)` : ''}`);
-    view = 'decks'; render();
+    toast(`${r.names.join(', ')}: 새 단어 ${r.added}개${r.shared ? ` · 이미 아는 단어 ${r.shared}개 (진도 유지)` : ''}${r.skipped ? ` · 중복 ${r.skipped}개` : ''}`);
+    view = r.conflicts ? 'pending' : 'decks'; render();
   } catch (e) {
     toast(e.message === 'backup' ? '백업 파일은 설정 → 백업 불러오기에서 열어주세요.' : '읽지 못했어요: ' + e.message);
   }
@@ -656,7 +726,12 @@ async function shareFile(name, text, fallbackMsg) {
 }
 function exportDeck(id) {
   const d = S.decks[id];
-  const cards = notesOf(id).map((n) => { const o = {}; for (const k of NOTE_FIELDS) if (n[k]) o[k] = n[k]; return o; });
+  const cards = notesOf(id).map((n) => {
+    const o = {}; for (const k of NOTE_FIELDS) if (n[k]) o[k] = n[k];
+    const mine = n.deckIds[0] === id ? null : n.more.find((m) => m.deckId === id);
+    if (mine) Object.assign(o, { sentence: mine.sentence, sentence_ko: mine.sentence_ko, time: mine.time });
+    return o;
+  });
   const json = JSON.stringify({ format: 'tango-deck-v1', deck: d.name, cards }, null, 2);
   shareFile(`${d.name.replace(/[\\/:*?"<>|]/g, '_')}.json`, json, '덱 파일을 저장했어요');
 }
@@ -741,8 +816,13 @@ const actions = {
   },
   'del-deck': (el) => {
     const d = S.decks[el.dataset.id];
-    if (!confirm(`「${d.name}」 단어장과 학습 기록을 지울까요?`)) return;
-    for (const n of notesOf(d.id)) deleteNote(n.id);
+    const ns = notesOf(d.id), only = ns.filter((n) => n.deckIds.length === 1).length;
+    if (!confirm(`「${d.name}」 단어장을 지울까요?\n이 단어장에만 있는 ${only}단어는 학습 기록과 함께 지워지고, 다른 단어장에도 있는 ${ns.length - only}단어는 남아요.`)) return;
+    for (const n of ns) {
+      n.deckIds = n.deckIds.filter((x) => x !== d.id);
+      n.more = n.more.filter((m) => m.deckId !== d.id);
+      if (!n.deckIds.length) deleteNote(n.id);
+    }
     delete S.decks[d.id]; if (S.settings.deck === d.id) S.settings.deck = 'all';
     save(); render();
   },
@@ -751,6 +831,8 @@ const actions = {
   'del-word': (el) => { if (confirm('이 단어를 지울까요?')) { deleteNote(el.dataset.id); save(); closeModal(); render(); } },
   'reset-word': (el) => { resetNote(S.notes[el.dataset.id]); save(); closeModal(); render(); toast('새 단어로 되돌렸어요'); },
   close: () => closeModal(),
+  pend: (el) => { resolvePending(el.dataset.id, el.dataset.how); save(); render(); },
+  'pend-all': (el) => { for (const p of [...(S.pending || [])]) resolvePending(p.id, el.dataset.how); save(); render(); },
   'copy-prompt': async () => {
     try { await navigator.clipboard.writeText(GPT_PROMPT); toast('프롬프트를 복사했어요'); }
     catch (e) { toast('복사하지 못했어요. 프롬프트 보기에서 직접 복사해 주세요.'); }
@@ -794,7 +876,13 @@ document.addEventListener('submit', (e) => {
     } else {
       let deckId = data.deck;
       if (!deckId || deckId === '__new') { const name = prompt('새 단어장 이름', '내 단어장'); if (!name) return; deckId = ensureDeck(name).id; }
-      addNote(deckId, data); toast('추가했어요');
+      const old = findNote(cleanNote(data));
+      if (old) {
+        const conflict = mergeInto(old, deckId, data);
+        save(); toast('이미 있는 단어라 이 단어장에 연결했어요 (진도 유지)');
+        if (conflict) { closeModal(); view = 'pending'; render(); return; }
+      }
+      else { addNote(deckId, data); toast('추가했어요'); }
       save(); form.reset(); form.querySelector('select[name=deck]').value = deckId; form.querySelector('[name=word]').focus();
       return;
     }

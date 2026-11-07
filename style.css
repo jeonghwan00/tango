@@ -193,3 +193,12 @@ rt { font-size: .5em; color: var(--muted); font-family: "Hiragino Sans", sans-se
   max-width: calc(100% - 32px); text-align: center;
 }
 #toast[hidden] { display: none; }
+
+.notice { background: var(--mark); border-color: transparent; text-align: left; font-weight: 600; }
+.pending { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.pending li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.pending .w { font-size: 22px; }
+.pending .pm .muted { display: inline-block; min-width: 4.5em; font-size: 13px; }
+.pending .sent { margin-top: 2px; }
+.pend-acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px; }
+.pend-acts button { padding: 10px 4px; font-size: 14px; }
