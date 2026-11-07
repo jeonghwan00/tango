@@ -669,6 +669,8 @@ function parseLoose(text) {
     else if (ch === '{' || ch === '[') { if (depth === 0) start = i; depth++; }
     else if (ch === '}' || ch === ']') { depth--; if (depth === 0 && start >= 0) { objs.push(JSON.parse(t.slice(start, i + 1))); start = -1; } }
   }
+  // 끝이 잘린 덩어리(GPT 답변이 끊긴 경우): 온전히 닫힌 카드만 살린다
+  if (depth > 0 && start >= 0) { const part = salvage(t.slice(start)); if (part) objs.push(part); }
   if (!objs.length) {
     // 탭 구분 텍스트: 단어 \t 읽기 \t 뜻 \t 예문 \t 예문뜻
     const rows = t.split('\n').map((l) => l.split('\t')).filter((r) => r.length >= 2);
@@ -676,6 +678,23 @@ function parseLoose(text) {
     throw new Error('형식을 읽지 못했어요');
   }
   return objs;
+}
+function salvage(t) {
+  const at = t.search(/"cards"\s*:\s*\[/);
+  const deck = (t.match(/"deck"\s*:\s*"((?:[^"\\]|\\.)*)"/) || [])[1];
+  const from = at >= 0 ? t.indexOf('[', at) + 1 : t[0] === '[' ? 1 : -1;
+  if (from <= 0) return null;
+  const cards = [];
+  let depth = 0, start = -1, inStr = false, escp = false;
+  for (let i = from; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) { if (escp) escp = false; else if (ch === '\\') escp = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}') { depth--; if (depth === 0 && start >= 0) { try { cards.push(JSON.parse(t.slice(start, i + 1))); } catch (e) {} start = -1; } }
+    else if (ch === ']' && depth === 0) break;
+  }
+  return cards.length ? { deck, cards, truncated: true } : null;
 }
 function importDeckObjects(objs, nameOverride) {
   let added = 0, shared = 0, skipped = 0, conflicts = 0; const names = new Set();
@@ -702,7 +721,8 @@ function importText(text, nameOverride) {
     const objs = parseLoose(text);
     if (objs.length === 1 && objs[0].notes && objs[0].settings) return restoreBackup(objs[0]);
     const r = importDeckObjects(objs, nameOverride);
-    toast(`${r.names.join(', ')}: 새 단어 ${r.added}개${r.shared ? ` · 이미 아는 단어 ${r.shared}개 (진도 유지)` : ''}${r.skipped ? ` · 중복 ${r.skipped}개` : ''}`);
+    const cut = objs.some((o) => o.truncated);
+    toast(`${cut ? '끝이 잘려 있어서 온전한 카드만 가져왔어요. ' : ''}${r.names.join(', ')}: 새 단어 ${r.added}개${r.shared ? ` · 이미 아는 단어 ${r.shared}개 (진도 유지)` : ''}${r.skipped ? ` · 중복 ${r.skipped}개` : ''}`);
     view = r.conflicts ? 'pending' : 'decks'; render();
   } catch (e) {
     toast(e.message === 'backup' ? '백업 파일은 설정 → 백업 불러오기에서 열어주세요.' : '읽지 못했어요: ' + e.message);
